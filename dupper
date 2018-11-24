@@ -5,6 +5,7 @@ Usage: $0 [--tag TAG] IMAGE_TAG
 
 -t, --tag     [TAG]     New tag image   [default: dupper_IMAGE_TAG]
 -u, --user    [USER]    Custom username [default: \$USER]
+--add-group   [GROUP]   Add user to group
 --to-file     [FILE]    Dump Dockerfile to file
 -v, --verbose           Print debug data
 
@@ -12,7 +13,8 @@ Examples:
 $0 php:7.2
 $0 ubuntu:latest --tag custom_tag
 $0 alpine:latest --user custom_user
-
+$0 apache:latest --to-file Dockerfile
+$0 php:7.2 -v --add-group www-data
 "
 
 VERBOSE=false
@@ -34,6 +36,11 @@ while [[ $# -gt 0 ]]; do
         ;;
         --to-file)
         CUSTOM_FILE="$2"
+        shift
+        shift
+        ;;
+        --add-group)
+        ADDED_GROUP="$2"
         shift
         shift
         ;;
@@ -63,6 +70,10 @@ USER=$(id --name -u)
 DOCKER_UID=$(id -u)
 
 IMAGE_TAG="$1"
+
+if [ ! -z $ADDED_GROUP ]; then
+    ADDED_GROUP="--ingroup $ADDED_GROUP"
+fi
 
 if [ -z $CUSTOM_TAG ]; then
     NEW_DOCKER_TAG="dupper_$IMAGE_TAG"
@@ -118,7 +129,7 @@ FROM $IMAGE_TAG
 
 RUN which adduser
 
-RUN adduser --disabled-password --gecos "" -u $DOCKER_UID $DOCKER_USER \\
+RUN adduser $ADDED_GROUP --disabled-password --gecos "" -u $DOCKER_UID $DOCKER_USER \\
     && mkdir -p /home/$DOCKER_USER \\
     && chown -R $DOCKER_USER /home/$DOCKER_USER
 
