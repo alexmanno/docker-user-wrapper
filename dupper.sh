@@ -1,0 +1,160 @@
+#!/usr/bin/env bash
+
+USAGE="
+Usage: $0 [--tag TAG] IMAGE_TAG
+
+-t, --tag     [TAG]     New tag image   [default: dupper_IMAGE_TAG]
+-u, --user    [USER]    Custom username [default: \$USER]
+--to-file     [FILE]    Dump Dockerfile to file
+-v, --verbose           Print debug data
+
+Examples:
+$0 php:7.2
+$0 ubuntu:latest --tag custom_tag
+$0 alpine:latest --user custom_user
+
+"
+
+VERBOSE=false
+
+POSITIONAL=()
+while [[ $# -gt 0 ]]; do
+    key="$1"
+
+    case $key in
+        -t|--tag)
+        CUSTOM_TAG="$2"
+        shift
+        shift
+        ;;
+        -u|--user)
+        CUSTOM_USER="$2"
+        shift
+        shift
+        ;;
+        --to-file)
+        CUSTOM_FILE="$2"
+        shift
+        shift
+        ;;
+        -v|--verbose)
+        VERBOSE=true
+        shift
+        ;;
+        -h|--help)
+        printf "$USAGE"
+        exit 0
+        shift
+        ;;
+        *)
+        POSITIONAL+=("$1")
+        shift # past argument
+        ;;
+    esac
+done
+set -- "${POSITIONAL[@]}"
+
+if [ -z $1 ]; then
+    printf "IMAGE_TAG required.\n$USAGE"
+    exit 1
+fi
+
+USER=$(id --name -u)
+DOCKER_UID=$(id -u)
+
+IMAGE_TAG="$1"
+
+if [ -z $CUSTOM_TAG ]; then
+    NEW_DOCKER_TAG="dupper_$IMAGE_TAG"
+else
+    NEW_DOCKER_TAG="$CUSTOM_TAG"
+fi
+
+if [ -z $CUSTOM_USER ]; then
+    DOCKER_USER="$USER"
+else
+    DOCKER_USER="$CUSTOM_USER"
+fi
+
+function _print_error_exit()
+{
+    RED='\033[0;31m'
+    NC='\033[0m'
+    printf "${RED}$1${NC}\n" && exit 1
+}
+function _print_success()
+{
+    GREEN='\033[0;32m'
+    NC='\033[0m'
+    printf "${GREEN}$1${NC}\n"
+}
+
+function check_docker_installation()
+{
+    which docker || _print_error_exit "No docker installation found."
+}
+
+function check_image_tag()
+{
+    echo "Pulling docker image"
+    PULL_OUTPUT=$(docker pull $IMAGE_TAG 2>&1)
+    PULL_STATUS=$?
+
+    [ $PULL_STATUS -gt 0 ] && _print_error_exit "Docker image tag not found. \n$PULL_OUTPUT"
+    [ $VERBOSE == 'true' ] && printf "$PULL_OUTPUT\n"
+
+    _print_success "Docker image pull success"
+}
+
+function _make_dockerfile ()
+{
+    echo "Generating Dockerfile"
+
+    DOCKER_FILE=$(mktemp /tmp/Dockerfile-XXXXXXXXXX)
+
+    cat <<EOT >> $DOCKER_FILE
+# Dockerfile automatically generated using dupper
+FROM $IMAGE_TAG
+
+RUN which adduser
+
+RUN adduser --disabled-password --gecos "" -u $DOCKER_UID $DOCKER_USER \\
+    && mkdir -p /home/$DOCKER_USER \\
+    && chown -R $DOCKER_USER /home/$DOCKER_USER
+
+WORKDIR /home/$DOCKER_USER
+USER $DOCKER_USER
+# Dockerfile end
+EOT
+
+    if [ ! -z $CUSTOM_FILE ]; then
+        cp $DOCKER_FILE $CUSTOM_FILE
+    fi
+
+    [ $VERBOSE == 'true' ] && cat $DOCKER_FILE
+}
+
+function _clean_up()
+{
+    rm $DOCKER_FILE || true
+}
+
+function wrap_user_docker()
+{
+    echo "Build docker image"
+
+    _make_dockerfile
+
+    BUILD_OUTPUT=$(docker build -t "$NEW_DOCKER_TAG" -f $DOCKER_FILE . 2>&1)
+    BUILD_STATUS=$?
+
+    [ $BUILD_STATUS -gt 0 ] && _print_error_exit "Dockerfile build failed. \n$BUILD_OUTPUT"
+    [ $VERBOSE == 'true' ] && printf "$BUILD_OUTPUT\n"
+
+    _print_success "$(printf "$BUILD_OUTPUT" | grep "Successfully tagged")"
+
+    _clean_up
+}
+
+check_image_tag
+wrap_user_docker
